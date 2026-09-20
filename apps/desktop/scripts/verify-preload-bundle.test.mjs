@@ -27,14 +27,17 @@ describe("desktop preload bundle verifier", () => {
     );
   });
 
-  it("rejects a required API whose exposed value is not callable", () => {
+  it("rejects a non-callable API after registering browser lifecycle handlers", () => {
     assert.throws(
       () =>
         verifyPreloadBundle(
-          validPreload.replace(
-            "getClientPlatform: () => process.platform,",
-            "getClientPlatform: undefined,",
-          ),
+          `
+            window.addEventListener("DOMContentLoaded", () => document.body, { once: true });
+            ${validPreload.replace(
+              "getClientPlatform: () => process.platform,",
+              "getClientPlatform: undefined,",
+            )}
+          `,
         ),
       /missing executable APIs: getClientPlatform/,
     );
