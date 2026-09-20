@@ -8,6 +8,23 @@ const id = Schema.String.check(
   Schema.isPattern(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/),
 );
 const identifier = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,255}$/));
+const integrityReason = Schema.Literals([
+  "AUTH_ERROR",
+  "PROVIDER_ERROR",
+  "TRANSPORT_ERROR",
+  "TOOL_PROTOCOL_ERROR",
+  "MEASUREMENT_INVALID",
+  "ORACLE_INVALID",
+  "CLEANUP_UNCONFIRMED",
+  "USAGE_UNKNOWN",
+  "TIMEOUT",
+  "HARNESS_DEFECT",
+]);
+const integrityReasons = Schema.Array(integrityReason).check(Schema.isMaxLength(10));
+const integrity = Schema.Struct({
+  state: Schema.Literals(["READY", "INVALID"]),
+  reasons: integrityReasons,
+});
 const target = Schema.Struct({
   provider: identifier,
   model: identifier,
@@ -31,6 +48,33 @@ export const WeavraFitnessSummary = Schema.Struct({
     "INTERRUPTED",
   ]),
   kind: Schema.Literals(["ACTUAL", "FAUX"]),
+  calibration: Schema.optionalKey(
+    Schema.Literals(["PENDING", "CALIBRATION_READY", "CALIBRATION_INVALID"]),
+  ),
+  evaluation: Schema.optionalKey(Schema.Literals(["EVALUATION_PARTIAL", "EVALUATION_COMPLETE"])),
+  stopReasons: Schema.optionalKey(integrityReasons),
+  fixtureResults: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        fixtureId: identifier,
+        terminalStatus: Schema.Literals([
+          "COMPLETED",
+          "BLOCKED",
+          "FAILED",
+          "CANCELLED",
+          "INTERRUPTED",
+          "NOT_STARTED",
+          "UNKNOWN",
+        ]),
+        oracle: Schema.Literals(["PASS", "FAIL", "INVALID"]),
+        falseCompletion: Schema.NullOr(Schema.Boolean),
+        taskContractAdherence: Schema.NullOr(Schema.Boolean),
+        usageState: Schema.Literals(["KNOWN", "UNKNOWN"]),
+        latencyMs: count,
+        integrity: Schema.NullOr(integrity),
+      }),
+    ).check(Schema.isMaxLength(64)),
+  ),
   correctness: Schema.Struct({
     executed: count,
     oraclePass: count,

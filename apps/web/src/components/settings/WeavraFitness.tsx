@@ -21,6 +21,93 @@ const command = createEnvironmentWeavraFitnessCommand(connectionAtomRuntime);
 const value = (number: number | null) => (number === null ? "UNKNOWN" : number.toLocaleString());
 const groups = ["correctness", "contract", "tools", "reliability", "efficiency"] as const;
 
+function Evidence({ run }: { run: WeavraFitnessSummary }) {
+  return (
+    <div className="space-y-2 text-xs text-muted-foreground">
+      <p>
+        Calibration: <span className="font-mono">{run.calibration ?? "UNKNOWN"}</span>
+      </p>
+      <p>
+        Evaluation: <span className="font-mono">{run.evaluation ?? "UNKNOWN"}</span>
+      </p>
+      <p>
+        Stop reasons:{" "}
+        <span className="font-mono">
+          {run.stopReasons === undefined ? "UNKNOWN" : run.stopReasons.join(", ") || "none"}
+        </span>
+      </p>
+      {run.fixtureResults === undefined ? (
+        <p>Fixture outcomes UNKNOWN (historical record)</p>
+      ) : (
+        <details>
+          <summary className="cursor-pointer">Fixture outcomes</summary>
+          <div className="mt-2 overflow-x-auto">
+            <table
+              className="w-full text-left text-xs"
+              aria-label={`Fixture outcomes for ${run.id}`}
+            >
+              <thead className="text-muted-foreground">
+                <tr>
+                  <th scope="col" className="py-2 pr-4">
+                    Fixture
+                  </th>
+                  <th scope="col" className="pr-4">
+                    Terminal
+                  </th>
+                  <th scope="col" className="pr-4">
+                    Oracle
+                  </th>
+                  <th scope="col" className="pr-4">
+                    False complete
+                  </th>
+                  <th scope="col" className="pr-4">
+                    Task contract adherence
+                  </th>
+                  <th scope="col" className="pr-4">
+                    Usage
+                  </th>
+                  <th scope="col" className="pr-4">
+                    Integrity / reasons
+                  </th>
+                  <th scope="col">Latency (ms)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {run.fixtureResults.map((fixture) => (
+                  <tr key={fixture.fixtureId} className="border-t border-border/40 font-mono">
+                    <th scope="row" className="py-2 pr-4 font-normal">
+                      {fixture.fixtureId}
+                    </th>
+                    <td className="pr-4">{fixture.terminalStatus}</td>
+                    <td className="pr-4">{fixture.oracle}</td>
+                    <td className="pr-4">
+                      {fixture.falseCompletion === null
+                        ? "UNKNOWN"
+                        : String(fixture.falseCompletion)}
+                    </td>
+                    <td className="pr-4">
+                      {fixture.taskContractAdherence === null
+                        ? "UNKNOWN"
+                        : String(fixture.taskContractAdherence)}
+                    </td>
+                    <td className="pr-4">{fixture.usageState}</td>
+                    <td className="pr-4">
+                      {fixture.integrity === null
+                        ? "UNKNOWN"
+                        : `${fixture.integrity.state} / ${fixture.integrity.reasons.join(", ") || "none"}`}
+                    </td>
+                    <td>{value(fixture.latencyMs)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
 function Target({ run }: { run: WeavraFitnessSummary }) {
   return (
     <div className="min-w-0 space-y-2">
@@ -31,6 +118,7 @@ function Target({ run }: { run: WeavraFitnessSummary }) {
         <Badge variant="outline">{run.kind}</Badge>
         <Badge variant="secondary">{run.status}</Badge>
       </div>
+      <Evidence run={run} />
       <details className="text-xs text-muted-foreground">
         <summary className="cursor-pointer">Exact target identity</summary>
         <dl className="mt-2 space-y-2">
@@ -176,7 +264,10 @@ export function WeavraFitness({
                               {run.corpusRevision}
                             </p>
                           </th>
-                          <td className="pr-4">{run.status}</td>
+                          <td className="space-y-2 pr-4">
+                            <p>{run.status}</p>
+                            <Evidence run={run} />
+                          </td>
                           <td className="pr-4 font-mono">
                             {run.correctness.oraclePass} / {run.correctness.oracleFail} /{" "}
                             {run.correctness.invalid}
