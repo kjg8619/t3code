@@ -41,6 +41,7 @@ import {
 import { ProjectActionsSettings } from "./ProjectActionsSettings";
 import { projectGroupTitleNeedsUpdate } from "./ProjectSettingsPanel.logic";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
+import { WeavraSettings } from "./WeavraSettings";
 
 const ProjectIconPickerDialog = lazy(() =>
   import("./ProjectIconPickerDialog").then((module) => ({
@@ -480,6 +481,20 @@ function ProjectDetail({
             }
           />
         </SettingsSection>
+        {group.memberProjects.length === 1 ? (
+          <WeavraSettings
+            environmentId={group.memberProjects[0]!.environmentId}
+            projectId={group.memberProjects[0]!.id}
+            workspaceRoot={group.memberProjects[0]!.workspaceRoot}
+          />
+        ) : (
+          <SettingsSection title="Weavra · Read-only">
+            <p className="text-sm text-muted-foreground">
+              Select one machine and checkout in the settings scope to observe its Weavra Run. Runs
+              from different checkouts are never combined.
+            </p>
+          </SettingsSection>
+        )}
         <ProjectActionsSettings />
         {hasMultipleCheckouts ? checkoutChoices : null}
         <SettingsSection title="Danger">

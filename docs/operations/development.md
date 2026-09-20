@@ -97,6 +97,74 @@ startup and keeps its own SQLite data, signing key, and revocation state. Deskto
 servers ignore the value. See [environment authentication](../internals/environment-auth.md#reusable-dev-credential)
 for the security model.
 
+## Read-only Weavra integration
+
+This V0.6A C07 slice observes a local Weavra project; it does not implement the C07 control
+slice. Install a compatible Weavra CLI, explicitly initialize its product home with setup,
+and run doctor in the same local environment as the T3 server. Use the Node 24 development
+environment above. Configure a trusted absolute executable path on the **T3 server's machine**,
+then use the existing dev command:
+
+```sh
+T3_WEAVRA_EXECUTABLE=/absolute/path/to/weavra vp run dev
+```
+
+There is no browser executable setting or additional server/listener. T3 launches that
+executable with `bridge --stdio --project-trusted` in the canonical root of an existing,
+authorized T3 `ProjectId`; clients cannot supply arbitrary roots. Project existence and root
+are revalidated before and after reads. The existing authenticated `weavra.observe` RPC
+requires `orchestration:read`. The optional environment capability `weavraReadOnly` gates
+use with older servers; update the server if it does not advertise support.
+
+Open **Settings → select project scope → Project → Weavra** (read-only). For a grouped
+project, select one environment/checkout first. The view shows an overview, source graph
+nodes/edges, and bounded evidence/config summaries, with no control buttons. Config summaries
+describe the current project configuration, not a Run's frozen configuration.
+
+### Transport and recovery
+
+The protocol v1 hello identifies `clientName=t3code` and `capabilities=[snapshots-only]`;
+the reply reports `runtimeVersion`, `transport=stdio`, `observationMode=snapshots-only`,
+and readiness (`READY`, `NOT_SETUP`, or `CONFIG_INVALID`). Only read commands are supported:
+`hello`, `capabilities`, `status`, `current-run`, `graph`, `evidence-summary`,
+`config-summary`, and `snapshot`. Strict UTF-8 JSONL, schema and correlation checks bound
+requests to 4,096 bytes and responses to 65,536 bytes, including the newline.
+
+T3 polls canonical snapshots every **2 seconds**, retries transport failures after
+**5 seconds**, and permits one outstanding request with a **10-second** timeout.
+Child shutdown sends SIGTERM, then force-kills after 2 seconds if needed. There is no
+event replay or fabrication of Runtime events; the in-process Runtime event sink is unchanged.
+
+Readiness describes local product-home/doctor checks, not project configuration, credentials,
+Provider connectivity, or a running workflow. Doctor warnings such as missing authentication
+can coexist with `READY`. Project configuration validity is reported separately in the summary.
+
+| State               | Meaning and recovery                                                                                                                       |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `NOT_INSTALLED`     | Configure an installed, trusted executable with the absolute server-local path above, then restart T3.                                     |
+| `NOT_SETUP`         | Initialize the server user's Weavra product home explicitly with setup, run doctor, then reopen the view.                                  |
+| `CONFIG_INVALID`    | Check the executable and local installation, home permissions, JSON files, and build with doctor; fix them, then reopen the view.          |
+| `READY`             | Local doctor checks passed; this does not mean a Runtime or Provider is ready to execute.                                                  |
+| `CONNECTING`        | The initial connection/handshake is in progress; allow it to complete.                                                                     |
+| `CONNECTED`         | Snapshot observation is connected, not proof of a live Runtime owner.                                                                      |
+| `DISCONNECTED`      | The transport has closed; retained data is stale. Check the executable/project and allow reconnect.                                        |
+| `RECONNECTING`      | T3 is retrying the transport; fix the underlying problem or reopen the view after recovery.                                                |
+| `PROTOCOL_MISMATCH` | Use compatible T3/Weavra versions, then restart T3 and reopen the view.                                                                    |
+| `ERROR`             | Check the reported failure, project access, and doctor; fix the cause, then reopen the view or restart T3 if server configuration changed. |
+
+Durable Run state, connection state, and owner liveness are distinct. A disconnected view
+may retain a `RUNNING` Run marked stale; missing fields and owner liveness remain `UNKNOWN`,
+even when connected. A writer-lock file is not liveness evidence. Regressed project or
+same-Run revisions and late results from old sessions are rejected; observations are scoped
+to the selected environment, project, and canonical root.
+
+T3 reads only the child's stdout JSONL, never Weavra `.ai` files. Summaries exclude raw
+prompts, reasoning, credentials, transcripts, source/document bodies, and tool output.
+Observation does not automatically set up a project, start/resume/cancel a Runtime,
+approve/reject work, write/edit files, or confer Task Contract, Policy, PASS, COMPLETE,
+or owner authority. This is local read-only observation, not paid-provider end-to-end
+or workflow-execution proof.
+
 ## Checks
 
 Run checks for the files and packages you changed:

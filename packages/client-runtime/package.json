@@ -187,6 +187,10 @@
       "types": "./src/state/runtime.ts",
       "default": "./src/state/runtime.ts"
     },
+    "./state/weavra": {
+      "types": "./src/state/weavra.ts",
+      "default": "./src/state/weavra.ts"
+    },
     "./state/usage": {
       "types": "./src/state/usage.ts",
       "default": "./src/state/usage.ts"
