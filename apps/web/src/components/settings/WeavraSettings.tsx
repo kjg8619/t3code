@@ -9,6 +9,7 @@ import { Badge } from "../ui/badge";
 import { SettingsGroup } from "./SettingsGroup";
 import { SettingsSection } from "./settingsLayout";
 import { WeavraControls } from "./WeavraControls";
+import { WeavraFitness } from "./WeavraFitness";
 
 const observations = createEnvironmentWeavraStateAtoms(connectionAtomRuntime);
 const explanations: Record<WeavraObservation["status"], string> = {
@@ -265,6 +266,11 @@ export function WeavraSettings({
           </div>
         </SettingsGroup>
       </SettingsSection>
+      <WeavraFitness
+        key={`fitness:${environmentId}:${projectId}:${workspaceRoot}`}
+        environmentId={environmentId}
+        projectId={projectId}
+      />
     </>
   );
 }

@@ -1,4 +1,10 @@
-import { type ProjectId, type WeavraObservation } from "@t3tools/contracts";
+import {
+  type ProjectId,
+  type WeavraObservation,
+  type WeavraFitnessInput,
+  type WeavraFitnessResponse,
+  WeavraFitnessError,
+} from "@t3tools/contracts";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -16,11 +22,15 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { subscribeBeforeSnapshotWithoutMutex } from "../utils/subscribeBeforeSnapshot.ts";
 import { BridgeFailure, observeBridge } from "./BridgeTransport.ts";
+import { readFitness } from "./FitnessReader.ts";
 
 export class RuntimeObserver extends Context.Service<
   RuntimeObserver,
   {
     readonly observe: (projectId: ProjectId) => Stream.Stream<WeavraObservation>;
+    readonly fitness: (
+      input: WeavraFitnessInput,
+    ) => Effect.Effect<WeavraFitnessResponse, WeavraFitnessError>;
   }
 >()("t3/weavra/RuntimeObserver") {}
 
@@ -175,6 +185,27 @@ export const make = Effect.fn("weavra.runtimeObserver.make")(function* () {
     );
   });
   return RuntimeObserver.of({
+    fitness: (input) =>
+      Effect.gen(function* () {
+        if (!executable || !path.isAbsolute(executable) || /[\r\n\0]/.test(executable))
+          return yield* new WeavraFitnessError({ code: "UNAVAILABLE" });
+        const root = yield* projectRoot(input.projectId).pipe(
+          Effect.mapError(() => new WeavraFitnessError({ code: "UNAVAILABLE" })),
+        );
+        const result = yield* readFitness(executable, root, childEnv, input).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.timeoutOrElse({
+            duration: Duration.seconds(20),
+            orElse: () => Effect.fail(new WeavraFitnessError({ code: "UNAVAILABLE" })),
+          }),
+          Effect.scoped,
+        );
+        const after = yield* projectRoot(input.projectId).pipe(
+          Effect.mapError(() => new WeavraFitnessError({ code: "PROJECT_CHANGED" })),
+        );
+        if (after !== root) return yield* new WeavraFitnessError({ code: "PROJECT_CHANGED" });
+        return result;
+      }),
     observe: (projectId) =>
       Stream.unwrap(
         Effect.gen(function* () {

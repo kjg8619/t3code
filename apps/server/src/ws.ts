@@ -3700,6 +3700,10 @@ const makeWsRpcLayer = (
           observeRpcStream(WS_METHODS.weavraObserve, runtimeObserver.observe(input.projectId), {
             "rpc.aggregate": "weavra",
           }),
+        [WS_METHODS.weavraFitness]: (input) =>
+          observeRpcEffect(WS_METHODS.weavraFitness, runtimeObserver.fitness(input), {
+            "rpc.aggregate": "weavra",
+          }),
         [WS_METHODS.weavraControl]: (input) =>
           observeRpcEffect(WS_METHODS.weavraControl, runtimeController.command(input), {
             "rpc.aggregate": "weavra",

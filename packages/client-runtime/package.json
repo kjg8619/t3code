@@ -195,6 +195,10 @@
       "types": "./src/state/weavraControl.ts",
       "default": "./src/state/weavraControl.ts"
     },
+    "./state/weavraFitness": {
+      "types": "./src/state/weavraFitness.ts",
+      "default": "./src/state/weavraFitness.ts"
+    },
     "./state/usage": {
       "types": "./src/state/usage.ts",
       "default": "./src/state/usage.ts"

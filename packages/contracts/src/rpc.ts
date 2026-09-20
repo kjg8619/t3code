@@ -279,6 +279,7 @@ import {
   WeavraControlResponse,
   WeavraControlTransportError,
 } from "./weavraControl.ts";
+import { WeavraFitnessInput, WeavraFitnessResponse, WeavraFitnessError } from "./weavraFitness.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -451,6 +452,7 @@ export const WS_METHODS = {
   weavraObserve: "weavra.observe",
   weavraControl: "weavra.control",
   weavraControlObserve: "weavra.controlObserve",
+  weavraFitness: "weavra.fitness",
 } as const;
 
 const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -1412,6 +1414,12 @@ const WsWeavraControlObserveRpc = Rpc.make(WS_METHODS.weavraControlObserve, {
   stream: true,
 });
 
+const WsWeavraFitnessRpc = Rpc.make(WS_METHODS.weavraFitness, {
+  payload: WeavraFitnessInput,
+  success: WeavraFitnessResponse,
+  error: Schema.Union([EnvironmentAuthorizationError, WeavraFitnessError]),
+});
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
@@ -1551,6 +1559,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsWeavraObserveRpc,
   WsWeavraControlRpc,
   WsWeavraControlObserveRpc,
+  WsWeavraFitnessRpc,
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationGetWorkflowScriptRpc,
   WsOrchestrationGetTurnDiffRpc,

@@ -183,6 +183,33 @@ approve/reject work, write/edit files, or confer Task Contract, Policy, PASS, CO
 or owner authority. This is local read-only observation, not paid-provider end-to-end
 or workflow-execution proof.
 
+### Provider fitness history
+
+The same **Project** page includes **Provider fitness · Read-only**. With the trusted
+executable/home setup above, select **Read history**, choose records A and B, then
+**Compare records**. This works without `T3_WEAVRA_CONTROL=1`.
+
+The optional `weavraFitness` capability and authenticated `weavra.fitness` RPC require
+`orchestration:read`. The server resolves and rechecks the project's canonical root,
+then invokes only `fitness list --json` or `fitness compare <UUID> <UUID> --json`.
+Clients cannot supply a root, executable, environment, storage path, or execution verb.
+Each request has a 20-second deadline and a 256-KiB stdout limit; invalid UTF-8,
+unknown fields, incompatible schemas, mismatched comparison IDs, and nonzero exits
+fail closed. Stderr and provider diagnostics are not forwarded.
+
+History is immutable recorded evidence, not live Runtime status. Collection status,
+oracle results, and false completion are separate. Comparison displays raw dimensions
+and corpus/budget/harness/configuration/fixture/kind compatibility, never a score,
+winner, or routing recommendation. `UNKNOWN` is not zero. Different executed fixture
+prefixes are **NOT COMPARABLE**, including calibration runs stopped at different points.
+Exact endpoint identity is a hash, not proof of the actual upstream backend.
+Per-fixture details remain available through the trusted CLI's `fitness show <UUID> --json`.
+
+Reads do not run evaluations, call providers, resume records, or modify model settings.
+Reconnect does not replay a request; refresh history explicitly. Late responses from an
+old component/connection are discarded. This is a read-only results surface, not
+evidence that any target passed calibration or the complete corpus.
+
 ### Opt-in workflow control
 
 Keep the executable/home setup above. From the T3 repository root, opt in on the trusted

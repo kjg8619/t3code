@@ -177,6 +177,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   desktopAppUpdate: Schema.optionalKey(Schema.Boolean),
   weavraReadOnly: Schema.optionalKey(Schema.Boolean),
   weavraControl: Schema.optionalKey(Schema.Boolean),
+  weavraFitness: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

@@ -46,3 +46,4 @@ export * from "./rpc.ts";
 export * from "./worktreeSetup.ts";
 export * from "./weavra.ts";
 export * from "./weavraControl.ts";
+export * from "./weavraFitness.ts";

@@ -248,6 +248,7 @@ export const make = Effect.gen(function* () {
       environmentIcon: true,
       projectCloneTracking: true,
       weavraReadOnly: true,
+      weavraFitness: true,
       ...(hostEnvironment.T3_WEAVRA_CONTROL === "1" ? { weavraControl: true } : {}),
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
       ...(serverSelfUpdate === "boot-service" || desktopAppUpdate
