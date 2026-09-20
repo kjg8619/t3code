@@ -191,6 +191,10 @@
       "types": "./src/state/weavra.ts",
       "default": "./src/state/weavra.ts"
     },
+    "./state/weavraControl": {
+      "types": "./src/state/weavraControl.ts",
+      "default": "./src/state/weavraControl.ts"
+    },
     "./state/usage": {
       "types": "./src/state/usage.ts",
       "default": "./src/state/usage.ts"

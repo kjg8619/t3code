@@ -155,6 +155,7 @@ import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as WeavraRuntimeObserver from "./weavra/RuntimeObserver.ts";
+import * as WeavraRuntimeController from "./weavra/RuntimeController.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import { listLinkedPullRequestThreads } from "./pullRequest/linkedThreads.ts";
@@ -665,6 +666,7 @@ const makeWsRpcLayer = (
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
       const runtimeObserver = yield* WeavraRuntimeObserver.RuntimeObserver;
+      const runtimeController = yield* WeavraRuntimeController.RuntimeController;
       const usage = yield* UsageService.UsageService;
       const relayClient = yield* RelayClient.RelayClient;
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
@@ -3698,6 +3700,16 @@ const makeWsRpcLayer = (
           observeRpcStream(WS_METHODS.weavraObserve, runtimeObserver.observe(input.projectId), {
             "rpc.aggregate": "weavra",
           }),
+        [WS_METHODS.weavraControl]: (input) =>
+          observeRpcEffect(WS_METHODS.weavraControl, runtimeController.command(input), {
+            "rpc.aggregate": "weavra",
+          }),
+        [WS_METHODS.weavraControlObserve]: (input) =>
+          observeRpcStream(
+            WS_METHODS.weavraControlObserve,
+            runtimeController.observe(input.projectId),
+            { "rpc.aggregate": "weavra" },
+          ),
       });
     }),
   );

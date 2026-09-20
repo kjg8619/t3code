@@ -187,6 +187,7 @@ import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as WeavraRuntimeObserver from "./weavra/RuntimeObserver.ts";
+import * as WeavraRuntimeController from "./weavra/RuntimeController.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as Data from "effect/Data";
 
@@ -1006,6 +1007,12 @@ const buildAppUnderTest = (options?: {
       )
       .pipe(
         Layer.provide(WeavraRuntimeObserver.layer),
+        Layer.provide(
+          Layer.mock(WeavraRuntimeController.RuntimeController)({
+            observe: () => Stream.empty,
+            command: () => Effect.die("Weavra control is not stubbed in this test"),
+          }),
+        ),
         Layer.provide(
           Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
             getUserInputActivity: () => Effect.die("unused"),

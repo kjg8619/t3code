@@ -272,6 +272,13 @@ import {
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
 import { WeavraObservation, WeavraObserveInput } from "./weavra.ts";
+import {
+  WeavraControlInput,
+  WeavraControlObservation,
+  WeavraControlObserveInput,
+  WeavraControlResponse,
+  WeavraControlTransportError,
+} from "./weavraControl.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -442,6 +449,8 @@ export const WS_METHODS = {
   subscribeBackgroundPolicy: "subscribeBackgroundPolicy",
   subscribeResourceTelemetry: "subscribeResourceTelemetry",
   weavraObserve: "weavra.observe",
+  weavraControl: "weavra.control",
+  weavraControlObserve: "weavra.controlObserve",
 } as const;
 
 const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -1390,6 +1399,19 @@ const WsWeavraObserveRpc = Rpc.make(WS_METHODS.weavraObserve, {
   stream: true,
 });
 
+const WsWeavraControlRpc = Rpc.make(WS_METHODS.weavraControl, {
+  payload: WeavraControlInput,
+  success: WeavraControlResponse,
+  error: Schema.Union([EnvironmentAuthorizationError, WeavraControlTransportError]),
+});
+
+const WsWeavraControlObserveRpc = Rpc.make(WS_METHODS.weavraControlObserve, {
+  payload: WeavraControlObserveInput,
+  success: WeavraControlObservation,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
@@ -1527,6 +1549,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeBackgroundPolicyRpc,
   WsSubscribeResourceTelemetryRpc,
   WsWeavraObserveRpc,
+  WsWeavraControlRpc,
+  WsWeavraControlObserveRpc,
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationGetWorkflowScriptRpc,
   WsOrchestrationGetTurnDiffRpc,

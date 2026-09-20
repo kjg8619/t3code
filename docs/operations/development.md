@@ -97,13 +97,30 @@ startup and keeps its own SQLite data, signing key, and revocation state. Deskto
 servers ignore the value. See [environment authentication](../internals/environment-auth.md#reusable-dev-credential)
 for the security model.
 
-## Read-only Weavra integration
+## Weavra integration
 
-This V0.6A C07 slice observes a local Weavra project; it does not implement the C07 control
-slice. Install a compatible Weavra CLI, explicitly initialize its product home with setup,
-and run doctor in the same local environment as the T3 server. Use the Node 24 development
-environment above. Configure a trusted absolute executable path on the **T3 server's machine**,
-then use the existing dev command:
+The V0.6A C07 integration includes read-only observation and a separate, opt-in workflow
+control slice. The contracts below are not a claim of remote CI success, paid-provider
+quality, or support outside this bounded slice. Acceptance and exact-SHA CI results are
+tracked in [Weavra's work log](https://github.com/kjg8619/pi/blob/devlop/docs/WORK_LOG.md).
+
+### Read-only setup
+
+Install a compatible Weavra CLI, explicitly initialize its product home with setup, and
+run doctor in the same local environment as the T3 server. Use the Node 24 development
+environment above. In a Pi checkout, the actual launcher is
+`packages/company-runtime/bin/weavra`, not a generic Pi executable. Its product home defaults
+to the server user's `~/.weavra`; an explicit `WEAVRA_HOME` must be used consistently for setup,
+doctor, and the T3 process and must not overlap `~/.pi`. Setup is explicit, never performed by
+opening the T3 view:
+
+```sh
+/absolute/path/to/pi/packages/company-runtime/bin/weavra setup
+/absolute/path/to/pi/packages/company-runtime/bin/weavra doctor
+```
+
+Configure a trusted absolute executable path on the **T3 server's machine**, then use the
+existing dev command:
 
 ```sh
 T3_WEAVRA_EXECUTABLE=/absolute/path/to/weavra vp run dev
@@ -116,12 +133,13 @@ are revalidated before and after reads. The existing authenticated `weavra.obser
 requires `orchestration:read`. The optional environment capability `weavraReadOnly` gates
 use with older servers; update the server if it does not advertise support.
 
-Open **Settings → select project scope → Project → Weavra** (read-only). For a grouped
-project, select one environment/checkout first. The view shows an overview, source graph
-nodes/edges, and bounded evidence/config summaries, with no control buttons. Config summaries
-describe the current project configuration, not a Run's frozen configuration.
+Open the project's sidebar **Project settings** button, or **Settings → select project scope
+→ Project**, then find **Weavra · Read-only**. For a grouped project, select one
+environment/checkout first. The read-only view shows an overview, source graph nodes/edges,
+and bounded evidence/config summaries, with no mutation controls in that section. Config
+summaries describe the current project configuration, not a Run's frozen configuration.
 
-### Transport and recovery
+### Read-only transport and recovery
 
 The protocol v1 hello identifies `clientName=t3code` and `capabilities=[snapshots-only]`;
 the reply reports `runtimeVersion`, `transport=stdio`, `observationMode=snapshots-only`,
@@ -164,6 +182,127 @@ Observation does not automatically set up a project, start/resume/cancel a Runti
 approve/reject work, write/edit files, or confer Task Contract, Policy, PASS, COMPLETE,
 or owner authority. This is local read-only observation, not paid-provider end-to-end
 or workflow-execution proof.
+
+### Opt-in workflow control
+
+Keep the executable/home setup above. From the T3 repository root, opt in on the trusted
+server and restart the development process:
+
+```sh
+T3_WEAVRA_EXECUTABLE=/absolute/path/to/pi/packages/company-runtime/bin/weavra \
+T3_WEAVRA_CONTROL=1 \
+vp run dev
+```
+
+If setup used a custom `WEAVRA_HOME`, export that same value before this command. Open the
+printed pairing URL, choose the existing project and a single environment/checkout, then
+open **Settings → select exact project scope → Project → Weavra · Workflow control**, above the read-only view.
+There is no browser-configurable executable or arbitrary project-root input.
+
+The server advertises `weavraControl` only when `T3_WEAVRA_CONTROL=1`. Both
+`weavra.controlObserve` and `weavra.control` require **`orchestration:operate`**; the legacy
+`weavra.observe` remains **`orchestration:read`**. Opening control observation acquires a
+server-owned Runtime connection, not merely a read-only observer. T3 launches the separate
+`bridge --stdio --project-trusted --control` endpoint in the authorized project's canonical
+root. The read-only argv, protocol v1, and snapshot-only capabilities remain unchanged.
+No additional network Host or listener is introduced.
+
+The closed control command set is `control.hello`, `control.snapshot`, `workflow.prepare`,
+`workflow.confirm`, `workflow.cancel`, and `approval.resolve`. Its strict UTF-8 JSONL limits
+are **32,768 request bytes** and **65,536 response bytes**, including the newline. T3 supplies
+goal text, reviewed recipe input data, and acceptance-criterion prose, not executable
+instructions or authority-bearing overrides. Runtime/Kernel owns classification, allowed
+scope, registered checks, criterion IDs and verification mappings, the frozen Task Contract,
+revisions, approval grants and consumption, Policy, and completion.
+
+#### Prepare, refresh, and confirm
+
+1. Wait for **CONTROL CONNECTED** and fresh canonical state. A busy owner, active Run, or
+   writer prevents preparing another plan.
+2. Enter a **Workflow goal** (up to 2,048 characters). Optionally select a **Reviewed recipe**
+   and fill its **Recipe inputs (JSON data only)** template. Inputs are string-valued data,
+   not shell commands, tools, or configuration overrides.
+3. Select **Prepare workflow**. Runtime prepares the preview without Provider calls or
+   starting a Workflow. Review workflow/risk/execution mode, allowed paths, registered checks,
+   configuration, recipe version, acceptance criteria, and Task Contract digest.
+4. Edit **Acceptance criteria · one line per criterion** if needed: 1–16 nonempty statements,
+   at most 500 characters each. Select **Refresh Plan Preview** after edits and review the
+   replacement Runtime-generated mappings and digest. Editing goal or recipe data invalidates
+   the old preview and requires preparing again. A preview expires after five minutes;
+   expiry, changed configuration, owner, or project revision requires a fresh preview.
+5. Select **Confirm and start**, then explicitly confirm the modal for that exact preview
+   and checkout. Only confirmation launches the existing Workflow. Plan confirmation is
+   **not R3 approval**, PASS, or COMPLETE.
+6. Observe canonical Run state and evidence. **accepted** is only an ACK that Runtime accepted
+   the request, not proof that a Run exists, checks passed, or execution completed. Model/Git/LSP
+   preflight can fail before creating a Run; the UI reports the start failure rather than
+   manufacturing a successful outcome or retrying automatically.
+
+#### Ownership, guards, and bounded retries
+
+Mutations carry the current Runtime owner UUID, Runtime-issued monotonic `nextRequestId`,
+and expected project revision. Confirmation also binds the preview ID/digest; cancellation
+and approval bind the existing Run ID and Run revision, and approval binds its pending
+approval ID. Runtime rechecks ownership, canonical root, configuration, and relevant state;
+T3 rejects regressed snapshots and late results from old sessions. A different owner cannot
+control a previously observed Run simply because a writer file or durable `RUNNING` status
+exists.
+
+Retry semantics are deliberately bounded, not a durable replay log:
+
+- IDs have the form `<owner UUID>:<sequence>` and must use the next sequence supplied by
+  Runtime. The owner retains at most **64 payload-bound mutation receipts**, including
+  rejected mutation results. Within that window, an identical ID and payload returns the
+  original response without executing again; a changed payload gives `REQUEST_ID_REUSED`.
+- An evicted/older ID gives `REQUEST_EXPIRED` and never executes again in the same owner epoch.
+  Skipping the next sequence gives `REQUEST_OUT_OF_ORDER`; a previous owner gives
+  `OWNER_CHANGED`. A new owner has no old receipt history and does not adopt old mutations.
+- The transport permits one outstanding exchange with a **10-second** wait. A timeout does
+  not forget that exchange: an identical retry waits for its correlated receipt without
+  writing another mutation; a different request cannot replace it.
+- **The UI does not automatically retry mutations or queue them for reconnect.** A transport
+  error means the outcome is unknown, not that the action failed. Wait for fresh canonical
+  state and review it before a new explicit action; never turn an uncertain ACK into a new
+  request ID merely to retry.
+
+Control snapshots poll every **2 seconds**. Transport closure/spawn failure can reconnect
+after **5 seconds**, but only observation reconnects; prior mutations are not replayed.
+Closing the tab, leaving Project Settings, or losing the browser connection does **not**
+terminate server-owned execution. Reconnecting must obtain fresh canonical state before
+enabling controls. This is not restart recovery: loss/replacement of the Runtime owner does
+not provide resume or adoption of its old Run.
+
+#### Cancel and pending R3 decisions
+
+**Cancel workflow** is available only for an existing, active Run owned by this connection
+with current Run/project revisions. Confirm the cancellation modal, then wait for canonical
+terminal state, owner idle state, and writer release. An accepted cancellation only requests
+shutdown: Runtime must stop active agents, checks, and child processes before releasing the
+writer. Partial workspace changes remain; there is no automatic commit, rollback, file
+cleanup, or fallback. Before a canonical Run exists, model/Git/LSP preflight has no wire Run ID
+to cancel; the UI does not offer a fictitious cancellation target.
+
+The only R3 decision surface is an existing, Runtime-owned **WAITING_APPROVAL** request for
+the already-supported **one-file deletion**. Inspect the target, Run/approval IDs, role/step,
+Run/project revisions, bytes, fingerprint, and expiry. **Reject** denies that pending request;
+**Approve once** requires explicit confirmation for that one deletion. Deny is the default,
+and expired/stale requests cannot be approved. Runtime still validates and consumes the grant
+against the exact operation and precondition. Neither the decision ACK nor approval itself
+establishes PASS or COMPLETE. This is not generic R3, a session-wide grant, or scope expansion.
+
+#### Unavailable state and limits
+
+**CONTROL UNAVAILABLE** disables actions when the environment is unsupported, disconnected,
+or stale; retained Run data is not current execution authority. Enable the server opt-in or
+update incompatible versions as appropriate, check `orchestration:operate` access, and use
+the readiness/doctor guidance above for installation/home failures. Fix project/root or
+protocol errors before reopening the view; restart T3 when changing its server environment.
+Do not remove a writer lock or infer owner liveness from it to bypass unavailable controls.
+
+This slice supports the existing QUICK/STANDARD Workflow paths, not COMPLEX, arbitrary
+write/edit/tool/shell dispatch, generic R3, resume/recovery, rollback, or fallback. T3 remains
+a Host requesting Runtime actions and showing bounded canonical summaries; it never becomes
+the Task Contract, Policy, approval-consumption, or completion authority.
 
 ## Checks
 
