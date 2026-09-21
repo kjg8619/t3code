@@ -1,8 +1,6 @@
 name: Weavra Upstream Sync
 
 on:
-  push:
-    branches: [main]
   schedule:
     # 07:30 KST (22:30 UTC, previous day)
     - cron: "30 22 * * *"
