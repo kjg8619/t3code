@@ -63,6 +63,9 @@ const helloResponse = {
         "workflow.confirm",
         "workflow.cancel",
         "approval.resolve",
+        "browser.inspect",
+        "browser.prepare",
+        "browser.confirm",
       ],
       maxRequestBytes: 32768,
       maxResponseBytes: 65536,
@@ -109,6 +112,7 @@ const snapshotResponse = {
       cancelling: false,
       startFailure: null,
       preview: null,
+      browserPreview: null,
       pendingApproval: null,
       snapshot: {
         status: {

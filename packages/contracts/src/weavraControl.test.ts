@@ -1,11 +1,19 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  type WeavraBrowserCandidateSummary,
+  type WeavraBrowserPreview,
+  type WeavraBrowserRegistrationRequest,
+  WeavraBrowserState,
+  type WeavraBrowserVerificationEvidence,
+  WeavraControlCapabilities,
   WeavraControlApproval,
   WeavraControlInput,
   WeavraControlObserveInput,
   WeavraControlRequest,
   WeavraControlResponse,
+  WeavraControlState,
+  type WeavraRegisteredBrowserCheck,
 } from "./weavraControl.ts";
 
 const decodeRpc = Schema.decodeUnknownSync(WeavraControlInput);
@@ -20,6 +28,112 @@ const request = {
   type: "workflow.prepare",
   goal: "Fix app bug",
 };
+
+const browserDigest = `sha256:${"a".repeat(64)}`;
+const registration = {
+  candidateId: "12345678-1234-1234-1234-123456789abc",
+  expectedCandidateDigest: browserDigest,
+  checkId: "page-ready",
+  origin: "http://127.0.0.1:4173",
+  documentIdentity: "http://127.0.0.1:4173/index.html",
+  target: { selector: "#ready" },
+  assertion: { type: "text_equals", expected: "Ready" },
+  freshness: { mode: "NEW_ISOLATED_CAPTURE", maxAgeMs: 15000 },
+} as const satisfies WeavraBrowserRegistrationRequest;
+const browserMutation = {
+  protocolVersion: 1,
+  id: "owner:2",
+  ownerId: "owner",
+  expectedProjectRevision: 0,
+} as const;
+const browserPrepare = { ...browserMutation, type: "browser.prepare", registration } as const;
+const browserCheck = {
+  version: 1,
+  checkId: registration.checkId,
+  projectId: browserDigest,
+  origin: registration.origin,
+  documentIdentity: registration.documentIdentity,
+  target: registration.target,
+  assertion: registration.assertion,
+  freshness: registration.freshness,
+  registrationDigest: browserDigest,
+} as const satisfies WeavraRegisteredBrowserCheck;
+const browserCandidate = {
+  schemaVersion: 2,
+  kind: "BROWSER_OBSERVATION_CANDIDATE",
+  candidateId: registration.candidateId,
+  projectId: browserDigest,
+  authority: "CANDIDATE_ONLY",
+  scope: "LOCAL_STATIC_DOCUMENT",
+  origin: registration.origin,
+  documentIdentity: registration.documentIdentity,
+  capturedAt: 100,
+  pageRevision: browserDigest,
+  source: {
+    implementationRevision: browserDigest,
+    readerRevision: "b".repeat(40),
+    readerDigest: browserDigest,
+    executableIdentityDigest: browserDigest,
+    browserVersion: "Chromium 140",
+  },
+  freshness: { mode: "CAPTURE_ONLY", startedAt: 90, finishedAt: 100 },
+  observationDigest: browserDigest,
+  observationType: "target",
+  observation: { target: registration.target, exists: true, value: "Ready" },
+  candidateDigest: browserDigest,
+  cleanup: "CONFIRMED",
+} as const satisfies WeavraBrowserCandidateSummary;
+const browserPreview = {
+  previewId: "preview",
+  previewDigest: browserDigest,
+  ownerId: "owner",
+  projectRevision: 0,
+  expiresAt: 300000,
+  candidate: browserCandidate,
+  check: browserCheck,
+  isolation: "PRIVATE_HOME_PROFILE_CDP_PIPE_NOT_OS_SANDBOX",
+} as const satisfies WeavraBrowserPreview;
+const browserEvidence = {
+  version: 1,
+  registrationDigest: browserDigest,
+  projectId: browserDigest,
+  origin: registration.origin,
+  documentIdentity: registration.documentIdentity,
+  documentDigest: browserDigest,
+  observationType: "target",
+  target: registration.target,
+  assertion: registration.assertion,
+  freshness: registration.freshness,
+  captureId: registration.candidateId,
+  capturedAt: 200,
+  implementationRevision: browserDigest,
+  executableIdentityDigest: browserDigest,
+  browserVersion: "Chromium 140",
+  observationDigest: browserDigest,
+  isolation: "PRIVATE_HOME_PROFILE_CDP_PIPE",
+  cleanup: "CONFIRMED",
+  result: "PASS",
+  browserEvidenceDigest: browserDigest,
+} as const satisfies WeavraBrowserVerificationEvidence;
+const browserState = {
+  projectId: browserDigest,
+  candidates: [browserCandidate],
+  omittedCandidates: 1,
+  checks: [{ check: browserCheck, required: true }],
+  omittedChecks: 0,
+  evidence: [
+    {
+      runId: "run",
+      checkId: browserCheck.checkId,
+      revision: 1,
+      step: { stepId: "test", attempt: 1 },
+      status: "PASS",
+      diffDigest: "c".repeat(64),
+      browser: browserEvidence,
+    },
+  ],
+  omittedEvidence: 0,
+} as const satisfies WeavraBrowserState;
 
 describe("Weavra control has a closed Runtime authority boundary", () => {
   it("accepts only the bounded typed preparation input", () => {
@@ -172,6 +286,227 @@ describe("Weavra control has a closed Runtime authority boundary", () => {
     expect(decode(response)).toEqual(response);
     expect(() =>
       decode({ ...response, error: { ...response.error, reason: "PRIVATE_CREDENTIAL_MARKER" } }),
+    ).toThrow();
+  });
+  it("accepts browser inspection, registration preparation and Runtime preview confirmation", () => {
+    for (const browserRequest of [
+      { ...browserMutation, type: "browser.inspect" },
+      browserPrepare,
+      {
+        ...browserMutation,
+        type: "browser.confirm",
+        previewId: browserPreview.previewId,
+        previewDigest: browserPreview.previewDigest,
+      },
+    ]) {
+      expect(decodeRpc({ projectId: "project", request: browserRequest })).toEqual({
+        projectId: "project",
+        request: browserRequest,
+      });
+      const { ownerId: _owner, ...missingOwner } = browserRequest;
+      const { expectedProjectRevision: _revision, ...missingRevision } = browserRequest;
+      expect(() => decodeWire(missingOwner)).toThrow();
+      expect(() => decodeWire(missingRevision)).toThrow();
+    }
+  });
+  it("rejects injected browser authority, executable paths and evaluation at every input level", () => {
+    for (const field of ["authority", "executable", "eval", "registrationDigest", "result"]) {
+      for (const injected of [
+        { ...browserPrepare, [field]: "injected" },
+        { ...browserPrepare, registration: { ...registration, [field]: "injected" } },
+        {
+          ...browserPrepare,
+          registration: {
+            ...registration,
+            target: { ...registration.target, [field]: "injected" },
+          },
+        },
+        {
+          ...browserPrepare,
+          registration: {
+            ...registration,
+            assertion: { ...registration.assertion, [field]: "injected" },
+          },
+        },
+        {
+          ...browserPrepare,
+          registration: {
+            ...registration,
+            freshness: { ...registration.freshness, [field]: "injected" },
+          },
+        },
+      ]) {
+        expect(() => decodeRpc({ projectId: "project", request: injected })).toThrow();
+      }
+    }
+    expect(() =>
+      decodeRpc({
+        projectId: "project",
+        request: {
+          ...browserMutation,
+          type: "browser.confirm",
+          previewId: browserPreview.previewId,
+          previewDigest: browserPreview.previewDigest,
+          registration,
+        },
+      }),
+    ).toThrow();
+  });
+  it("bounds typed browser selectors, attributes, expected values and freshness", () => {
+    const attributeRegistration = {
+      ...registration,
+      target: { selector: "#ready", attribute: "aria-label" },
+      assertion: { type: "attribute_equals", expected: "x".repeat(1024) },
+      freshness: { mode: "NEW_ISOLATED_CAPTURE", maxAgeMs: 1 },
+    };
+    expect(
+      decodeRpc({
+        projectId: "project",
+        request: { ...browserPrepare, registration: attributeRegistration },
+      }).request,
+    ).toEqual({
+      ...browserPrepare,
+      registration: attributeRegistration,
+    });
+    for (const invalid of [
+      { ...registration, target: { selector: "body" } },
+      { ...registration, target: { selector: `#${"x".repeat(65)}` } },
+      { ...registration, target: { selector: "#ready", attribute: "onclick" } },
+      { ...registration, assertion: { type: "text_equals", expected: "x".repeat(1025) } },
+      { ...registration, assertion: { type: "element_exists", expected: "Ready" } },
+      { ...registration, freshness: { mode: "NEW_ISOLATED_CAPTURE", maxAgeMs: 0 } },
+      { ...registration, freshness: { mode: "NEW_ISOLATED_CAPTURE", maxAgeMs: 15001 } },
+      { ...registration, freshness: { mode: "NEW_ISOLATED_CAPTURE", maxAgeMs: 1.5 } },
+    ]) {
+      expect(() =>
+        decodeRpc({
+          projectId: "project",
+          request: { ...browserPrepare, registration: invalid },
+        }),
+      ).toThrow();
+    }
+  });
+  it("decodes bounded browser results without exposing document text or private executable data", () => {
+    const decode = Schema.decodeUnknownSync(WeavraControlResponse, { onExcessProperty: "error" });
+    const response = {
+      protocolVersion: 1,
+      type: "control_response",
+      id: "owner:2",
+      command: "browser.inspect",
+      ownerId: "owner",
+      runId: null,
+      stateRevision: null,
+      projectRevision: 0,
+      eventId: null,
+      timestamp: 200,
+      success: true,
+    };
+    for (const data of [
+      { kind: "browser-state", state: browserState },
+      { kind: "browser-prepared", preview: browserPreview },
+      { kind: "browser-registered", check: browserCheck },
+    ]) {
+      expect(decode({ ...response, data })).toEqual({ ...response, data });
+    }
+    const decodeState = Schema.decodeUnknownSync(WeavraBrowserState, {
+      onExcessProperty: "error",
+    });
+    expect(
+      decodeState({
+        ...browserState,
+        evidence: [
+          { ...browserState.evidence[0], step: null, status: "UNAVAILABLE", browser: null },
+        ],
+      }).evidence[0]?.browser,
+    ).toBeNull();
+    for (const field of ["candidates", "checks", "evidence"] as const) {
+      expect(() =>
+        decodeState({
+          ...browserState,
+          [field]: Array(3).fill(browserState[field][0]),
+        }),
+      ).toThrow();
+    }
+    for (const candidate of [
+      { ...browserCandidate, authority: "Runtime/Kernel" },
+      {
+        ...browserCandidate,
+        source: { ...browserCandidate.source, executable: "/private/chrome" },
+      },
+      {
+        ...browserCandidate,
+        observation: { ...browserCandidate.observation, text: "private document" },
+      },
+      {
+        ...browserCandidate,
+        observation: { ...browserCandidate.observation, value: "x".repeat(1025) },
+      },
+    ]) {
+      expect(() => decodeState({ ...browserState, candidates: [candidate] })).toThrow();
+    }
+  });
+  it("requires the browser preview slot and the coordinated nine-command capability tuple", () => {
+    const decodeState = Schema.decodeUnknownSync(WeavraControlState);
+    const state = {
+      ownerId: "owner",
+      nextRequestId: "owner:3",
+      projectRevision: 0,
+      stateRevision: null,
+      ownedRunId: null,
+      busy: false,
+      cancelling: false,
+      startFailure: null,
+      preview: null,
+      browserPreview: null,
+      pendingApproval: null,
+      snapshot: {
+        status: {
+          source: "durable-canonical-state",
+          ownerObserved: false,
+          state: "missing",
+          writerPresent: false,
+          run: null,
+        },
+        graph: null,
+        graphAvailable: false,
+        evidence: null,
+        configuration: { source: "project-config-not-frozen-run-config", status: "missing" },
+      },
+    };
+    expect(decodeState(state)).toEqual(state);
+    expect(decodeState({ ...state, browserPreview }).browserPreview).toEqual(browserPreview);
+    const { browserPreview: _preview, ...legacyState } = state;
+    expect(() => decodeState(legacyState)).toThrow();
+    const capabilities = {
+      authority: "Runtime/Kernel",
+      control: "workflow-control-v1",
+      ownerId: "owner",
+      commands: [
+        "control.hello",
+        "control.snapshot",
+        "workflow.prepare",
+        "workflow.confirm",
+        "workflow.cancel",
+        "approval.resolve",
+        "browser.inspect",
+        "browser.prepare",
+        "browser.confirm",
+      ],
+      maxRequestBytes: 32768,
+      maxResponseBytes: 65536,
+      resultLimit: 64,
+      previewTtlMs: 300000,
+      runtimeVersion: "1.0.0",
+      readiness: "READY",
+      recipes: [],
+    };
+    const decodeCapabilities = Schema.decodeUnknownSync(WeavraControlCapabilities);
+    expect(decodeCapabilities(capabilities)).toEqual(capabilities);
+    expect(() =>
+      decodeCapabilities({
+        ...capabilities,
+        commands: capabilities.commands.slice(0, 6),
+      }),
     ).toThrow();
   });
 });

@@ -79,7 +79,7 @@ export function ConfirmDialogHost() {
         <AlertDialogHeader>
           <AlertDialogTitle className="wrap-anywhere">{copy.title}</AlertDialogTitle>
           {copy.description ? (
-            <AlertDialogDescription className="whitespace-pre-line">
+            <AlertDialogDescription className="wrap-anywhere whitespace-pre-line">
               {copy.description}
             </AlertDialogDescription>
           ) : null}

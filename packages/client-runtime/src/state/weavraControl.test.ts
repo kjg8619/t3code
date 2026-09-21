@@ -47,6 +47,50 @@ const target = new PrimaryConnectionTarget({
 });
 const projectId = ProjectId.make("project");
 const digest = `sha256:${"a".repeat(64)}`;
+const browserPreview: NonNullable<WeavraControlState["browserPreview"]> = {
+  previewId: "browser-preview",
+  previewDigest: digest,
+  ownerId: "owner",
+  projectRevision: 10,
+  expiresAt: 10000,
+  candidate: {
+    schemaVersion: 2,
+    kind: "BROWSER_OBSERVATION_CANDIDATE",
+    candidateId: "00000000-0000-4000-8000-000000000001",
+    projectId: digest,
+    authority: "CANDIDATE_ONLY",
+    scope: "LOCAL_STATIC_DOCUMENT",
+    origin: "http://localhost",
+    documentIdentity: "http://localhost/index.html",
+    capturedAt: 10,
+    pageRevision: digest,
+    source: {
+      implementationRevision: digest,
+      readerRevision: "a".repeat(40),
+      readerDigest: digest,
+      executableIdentityDigest: digest,
+      browserVersion: "Chromium 130",
+    },
+    freshness: { mode: "CAPTURE_ONLY", startedAt: 9, finishedAt: 10 },
+    observationDigest: digest,
+    observationType: "target",
+    observation: { target: { selector: "#status" }, exists: true, value: "Ready" },
+    candidateDigest: digest,
+    cleanup: "CONFIRMED",
+  },
+  check: {
+    version: 1,
+    checkId: "status-ready",
+    projectId: digest,
+    origin: "http://localhost",
+    documentIdentity: "http://localhost/index.html",
+    target: { selector: "#status" },
+    assertion: { type: "text_equals", expected: "Ready" },
+    freshness: { mode: "NEW_ISOLATED_CAPTURE", maxAgeMs: 10000 },
+    registrationDigest: digest,
+  },
+  isolation: "PRIVATE_HOME_PROFILE_CDP_PIPE_NOT_OS_SANDBOX",
+};
 
 function canonicalState(
   projectRevision: number,
@@ -87,6 +131,7 @@ function canonicalState(
         lspEnabled: false,
       },
     },
+    browserPreview: null,
     pendingApproval: {
       approvalId: "approval",
       runId,
@@ -274,7 +319,13 @@ const cancelInput: WeavraControlInput = {
 };
 function accepted(input: WeavraControlInput): WeavraControlResponse {
   const command = input.request.type;
-  if (command === "workflow.prepare") throw new Error("Prepare is not an accepted acknowledgement");
+  if (
+    command !== "workflow.confirm" &&
+    command !== "workflow.cancel" &&
+    command !== "approval.resolve"
+  ) {
+    throw new Error("Command is not an accepted acknowledgement");
+  }
   return {
     protocolVersion: 1,
     type: "control_response",
@@ -405,7 +456,10 @@ it.effect(
       const remote = yield* makeSession();
       const supervisor = yield* setup(remote.session);
       const state = yield* makeEnvironmentWeavraControlState(projectId, {
-        observation: observed(10),
+        observation: {
+          ...observed(10),
+          state: { ...canonicalState(10), browserPreview },
+        },
       }).pipe(Effect.provideService(EnvironmentSupervisor, supervisor));
       const subscription = yield* Queue.take(remote.subscriptions);
       const replacement = observed(11, 1, "replacement-run", "replacement-owner");
@@ -423,6 +477,7 @@ it.effect(
         state: {
           ...canonicalState(11, 1, "replacement-run", "replacement-owner"),
           preview: null,
+          browserPreview: null,
           pendingApproval: null,
         },
       };
@@ -738,7 +793,10 @@ it.effect(
       const remote = yield* makeSession();
       const supervisor = yield* setup(remote.session);
       const state = yield* makeEnvironmentWeavraControlState(projectId, {
-        observation: observed(10),
+        observation: {
+          ...observed(10),
+          state: { ...canonicalState(10), browserPreview },
+        },
       }).pipe(Effect.provideService(EnvironmentSupervisor, supervisor));
       const subscription = yield* Queue.take(remote.subscriptions);
       const replacement: WeavraControlObservation = {
@@ -746,6 +804,7 @@ it.effect(
         state: {
           ...canonicalState(11, 1, "replacement-run", "replacement-owner"),
           preview: null,
+          browserPreview: null,
           pendingApproval: null,
         },
       };

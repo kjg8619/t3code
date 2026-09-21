@@ -81,6 +81,9 @@ function consistent(response: WeavraControlResponse, previous: WeavraControlStat
     (!state.preview ||
       (state.preview.ownerId === state.ownerId &&
         state.preview.projectRevision === state.projectRevision)) &&
+    (!state.browserPreview ||
+      (state.browserPreview.ownerId === state.ownerId &&
+        state.browserPreview.projectRevision === state.projectRevision)) &&
     (!approval ||
       (approval.runId === run?.runId &&
         run.status === "WAITING_APPROVAL" &&
@@ -364,15 +367,29 @@ export const make = Effect.fn("weavra.runtimeController.make")(function* () {
         yield* validate(entry);
         if (response.ownerId !== entry.latest.capabilities?.ownerId)
           return yield* new WeavraControlTransportError({ code: "INVALID_PAYLOAD" });
-        if (
-          response.success &&
-          ((input.request.type === "workflow.prepare" && response.data.kind !== "prepared") ||
-            (input.request.type !== "workflow.prepare" &&
-              (response.data.kind !== "accepted" ||
-                response.data.command !== input.request.type ||
-                response.data.requestId !== input.request.id)))
-        )
-          return yield* new WeavraControlTransportError({ code: "INVALID_PAYLOAD" });
+        if (response.success) {
+          const request = input.request;
+          const data = response.data;
+          const valid =
+            request.type === "workflow.prepare"
+              ? data.kind === "prepared"
+              : request.type === "browser.inspect"
+                ? data.kind === "browser-state"
+                : request.type === "browser.prepare"
+                  ? data.kind === "browser-prepared" &&
+                    data.preview.ownerId === request.ownerId &&
+                    data.preview.projectRevision === request.expectedProjectRevision &&
+                    data.preview.candidate.candidateId === request.registration.candidateId &&
+                    data.preview.candidate.candidateDigest ===
+                      request.registration.expectedCandidateDigest &&
+                    data.preview.check.checkId === request.registration.checkId
+                  : request.type === "browser.confirm"
+                    ? data.kind === "browser-registered"
+                    : data.kind === "accepted" &&
+                      data.command === request.type &&
+                      data.requestId === request.id;
+          if (!valid) return yield* new WeavraControlTransportError({ code: "INVALID_PAYLOAD" });
+        }
         yield* refresh.pipe(Effect.catch((error) => unavailable(entry, error)));
         return response;
       }).pipe(

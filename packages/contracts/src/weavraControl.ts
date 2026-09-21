@@ -18,6 +18,9 @@ export const WEAVRA_CONTROL_COMMANDS = [
   "workflow.confirm",
   "workflow.cancel",
   "approval.resolve",
+  "browser.inspect",
+  "browser.prepare",
+  "browser.confirm",
 ] as const;
 
 const identifier = WeavraRunSummary.fields.runId;
@@ -32,7 +35,190 @@ const goal = Schema.String.check(
 const envelope = { protocolVersion: Schema.Literal(1), id: identifier };
 const mutation = { ...envelope, ownerId: identifier, expectedProjectRevision: counter };
 
+const browserIdentifier = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(64),
+  Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
+);
+const browserCaptureId = Schema.String.check(
+  Schema.isPattern(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/),
+);
+const browserUrl = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2048));
+const browserVersion = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(128));
+const browserValue = Schema.String.check(Schema.isMaxLength(1024));
+
+export const WeavraBrowserTarget = Schema.Struct({
+  selector: Schema.String.check(
+    Schema.isPattern(/^#[A-Za-z][A-Za-z0-9_-]{0,63}$/),
+    Schema.isMaxLength(65),
+  ),
+  attribute: Schema.optionalKey(
+    Schema.Literals([
+      "role",
+      "title",
+      "aria-label",
+      "aria-disabled",
+      "aria-checked",
+      "aria-expanded",
+      "aria-selected",
+    ]),
+  ),
+});
+export type WeavraBrowserTarget = typeof WeavraBrowserTarget.Type;
+
+export const WeavraBrowserAssertion = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literals(["text_equals", "text_contains"]),
+    expected: browserValue,
+  }),
+  Schema.Struct({ type: Schema.Literals(["element_exists", "element_not_exists"]) }),
+  Schema.Struct({ type: Schema.Literal("attribute_equals"), expected: browserValue }),
+]);
+export type WeavraBrowserAssertion = typeof WeavraBrowserAssertion.Type;
+
+export const WeavraBrowserFreshnessPolicy = Schema.Struct({
+  mode: Schema.Literal("NEW_ISOLATED_CAPTURE"),
+  maxAgeMs: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 15000 })),
+});
+export type WeavraBrowserFreshnessPolicy = typeof WeavraBrowserFreshnessPolicy.Type;
+
+export const WeavraBrowserRegistrationRequest = Schema.Struct({
+  candidateId: browserCaptureId,
+  expectedCandidateDigest: digest,
+  checkId: browserIdentifier,
+  origin: browserUrl,
+  documentIdentity: browserUrl,
+  target: WeavraBrowserTarget,
+  assertion: WeavraBrowserAssertion,
+  freshness: WeavraBrowserFreshnessPolicy,
+});
+export type WeavraBrowserRegistrationRequest = typeof WeavraBrowserRegistrationRequest.Type;
+
+export const WeavraRegisteredBrowserCheck = Schema.Struct({
+  version: Schema.Literal(1),
+  checkId: browserIdentifier,
+  projectId: digest,
+  origin: browserUrl,
+  documentIdentity: browserUrl,
+  target: WeavraBrowserTarget,
+  assertion: WeavraBrowserAssertion,
+  freshness: WeavraBrowserFreshnessPolicy,
+  registrationDigest: digest,
+});
+export type WeavraRegisteredBrowserCheck = typeof WeavraRegisteredBrowserCheck.Type;
+
+export const WeavraBrowserCandidateSummary = Schema.Struct({
+  schemaVersion: Schema.Literal(2),
+  kind: Schema.Literal("BROWSER_OBSERVATION_CANDIDATE"),
+  candidateId: browserCaptureId,
+  projectId: digest,
+  authority: Schema.Literal("CANDIDATE_ONLY"),
+  scope: Schema.Literal("LOCAL_STATIC_DOCUMENT"),
+  origin: browserUrl,
+  documentIdentity: browserUrl,
+  capturedAt: counter,
+  pageRevision: digest,
+  source: Schema.Struct({
+    implementationRevision: digest,
+    readerRevision: Schema.String.check(Schema.isPattern(/^[a-f0-9]{40}$/)),
+    readerDigest: digest,
+    executableIdentityDigest: digest,
+    browserVersion,
+  }),
+  freshness: Schema.Struct({
+    mode: Schema.Literal("CAPTURE_ONLY"),
+    startedAt: counter,
+    finishedAt: counter,
+  }),
+  observationDigest: digest,
+  observationType: Schema.Literal("target"),
+  observation: Schema.Struct({
+    target: WeavraBrowserTarget,
+    exists: Schema.Boolean,
+    value: Schema.NullOr(browserValue),
+  }),
+  candidateDigest: digest,
+  cleanup: Schema.Literal("CONFIRMED"),
+});
+export type WeavraBrowserCandidateSummary = typeof WeavraBrowserCandidateSummary.Type;
+
+export const WeavraBrowserVerificationEvidence = Schema.Struct({
+  version: Schema.Literal(1),
+  registrationDigest: digest,
+  projectId: digest,
+  origin: browserUrl,
+  documentIdentity: browserUrl,
+  documentDigest: digest,
+  observationType: Schema.Literal("target"),
+  target: WeavraBrowserTarget,
+  assertion: WeavraBrowserAssertion,
+  freshness: WeavraBrowserFreshnessPolicy,
+  captureId: browserCaptureId,
+  capturedAt: counter,
+  implementationRevision: digest,
+  executableIdentityDigest: digest,
+  browserVersion,
+  observationDigest: digest,
+  isolation: Schema.Literal("PRIVATE_HOME_PROFILE_CDP_PIPE"),
+  cleanup: Schema.Literal("CONFIRMED"),
+  result: Schema.Literals(["PASS", "FAIL"]),
+  browserEvidenceDigest: digest,
+});
+export type WeavraBrowserVerificationEvidence = typeof WeavraBrowserVerificationEvidence.Type;
+
+export const WeavraBrowserPreview = Schema.Struct({
+  previewId: identifier,
+  previewDigest: digest,
+  ownerId: identifier,
+  projectRevision: counter,
+  expiresAt: counter,
+  candidate: WeavraBrowserCandidateSummary,
+  check: WeavraRegisteredBrowserCheck,
+  isolation: Schema.Literal("PRIVATE_HOME_PROFILE_CDP_PIPE_NOT_OS_SANDBOX"),
+});
+export type WeavraBrowserPreview = typeof WeavraBrowserPreview.Type;
+
+export const WeavraBrowserState = Schema.Struct({
+  projectId: digest,
+  candidates: Schema.Array(WeavraBrowserCandidateSummary).check(Schema.isMaxLength(2)),
+  omittedCandidates: counter,
+  checks: Schema.Array(
+    Schema.Struct({ check: WeavraRegisteredBrowserCheck, required: Schema.Boolean }),
+  ).check(Schema.isMaxLength(2)),
+  omittedChecks: counter,
+  evidence: Schema.Array(
+    Schema.Struct({
+      runId: identifier,
+      checkId: browserIdentifier,
+      revision: counter,
+      step: Schema.NullOr(
+        Schema.Struct({
+          stepId: Schema.Literals(["implement", "self-check", "review", "test", "complete"]),
+          attempt: counter.check(Schema.isGreaterThanOrEqualTo(1)),
+        }),
+      ),
+      status: Schema.Literals(["PASS", "FAIL", "SKIPPED", "UNAVAILABLE"]),
+      diffDigest: boundedText,
+      browser: Schema.NullOr(WeavraBrowserVerificationEvidence),
+    }),
+  ).check(Schema.isMaxLength(2)),
+  omittedEvidence: counter,
+});
+export type WeavraBrowserState = typeof WeavraBrowserState.Type;
+
 export const WeavraControlMutation = Schema.Union([
+  Schema.Struct({ ...mutation, type: Schema.Literal("browser.inspect") }),
+  Schema.Struct({
+    ...mutation,
+    type: Schema.Literal("browser.prepare"),
+    registration: WeavraBrowserRegistrationRequest,
+  }),
+  Schema.Struct({
+    ...mutation,
+    type: Schema.Literal("browser.confirm"),
+    previewId: identifier,
+    previewDigest: digest,
+  }),
   Schema.Struct({
     ...mutation,
     type: Schema.Literal("workflow.prepare"),
@@ -115,6 +301,10 @@ export const WeavraControlErrorCode = Schema.Literals([
   "RESPONSE_TOO_LARGE",
   "BUSY",
   "START_FAILED",
+  "BROWSER_UNAVAILABLE",
+  "CANDIDATE_CHANGED",
+  "INVALID_BROWSER_CHECK",
+  "CHECK_EXISTS",
 ]);
 export type WeavraControlErrorCode = typeof WeavraControlErrorCode.Type;
 
@@ -185,6 +375,7 @@ export const WeavraControlState = Schema.Struct({
   cancelling: Schema.Boolean,
   startFailure: Schema.NullOr(Schema.Literal("START_FAILED")),
   preview: Schema.NullOr(WeavraControlPreview),
+  browserPreview: Schema.NullOr(WeavraBrowserPreview),
   pendingApproval: Schema.NullOr(WeavraControlApproval),
   snapshot: WeavraSnapshotSummary,
 });
@@ -201,6 +392,9 @@ export const WeavraControlCapabilities = Schema.Struct({
     Schema.Literal(WEAVRA_CONTROL_COMMANDS[3]),
     Schema.Literal(WEAVRA_CONTROL_COMMANDS[4]),
     Schema.Literal(WEAVRA_CONTROL_COMMANDS[5]),
+    Schema.Literal(WEAVRA_CONTROL_COMMANDS[6]),
+    Schema.Literal(WEAVRA_CONTROL_COMMANDS[7]),
+    Schema.Literal(WEAVRA_CONTROL_COMMANDS[8]),
   ]),
   maxRequestBytes: counter,
   maxResponseBytes: counter,
@@ -223,6 +417,12 @@ const controlData = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("capabilities"), capabilities: WeavraControlCapabilities }),
   Schema.Struct({ kind: Schema.Literal("snapshot"), state: WeavraControlState }),
   Schema.Struct({ kind: Schema.Literal("prepared"), preview: WeavraControlPreview }),
+  Schema.Struct({ kind: Schema.Literal("browser-state"), state: WeavraBrowserState }),
+  Schema.Struct({ kind: Schema.Literal("browser-prepared"), preview: WeavraBrowserPreview }),
+  Schema.Struct({
+    kind: Schema.Literal("browser-registered"),
+    check: WeavraRegisteredBrowserCheck,
+  }),
   Schema.Struct({
     kind: Schema.Literal("accepted"),
     requestId: identifier,

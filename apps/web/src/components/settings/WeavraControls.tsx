@@ -6,6 +6,9 @@ import {
 import {
   type EnvironmentId,
   type ProjectId,
+  type WeavraBrowserAssertion,
+  type WeavraBrowserPreview,
+  type WeavraBrowserState,
   WeavraControlMutation,
   type WeavraControlPreview,
 } from "@t3tools/contracts";
@@ -61,6 +64,19 @@ export function WeavraControls({
   const [commandState, setCommandState] = useState<CommandState>(idle);
   const pending = useRef(false);
   const mounted = useRef(true);
+  const [browserInspection, setBrowserInspection] = useState<{
+    ownerId: string;
+    projectRevision: number;
+    stateRevision: number | null;
+    runId: string | null;
+    data: WeavraBrowserState;
+  } | null>(null);
+  const [candidateId, setCandidateId] = useState("");
+  const [browserCheckId, setBrowserCheckId] = useState("");
+  const [assertionType, setAssertionType] = useState<WeavraBrowserAssertion["type"]>("text_equals");
+  const [expectedValue, setExpectedValue] = useState("");
+  const [browserPreview, setBrowserPreview] = useState<WeavraBrowserPreview | null>(null);
+  const [preparedBrowserDraft, setPreparedBrowserDraft] = useState<string | null>(null);
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -76,10 +92,38 @@ export function WeavraControls({
     observation?.status === "CONNECTED" &&
     !observation.stale &&
     !!state;
-  const latest = useRef({ fresh, state });
+  const candidate = browserInspection?.data.candidates.find(
+    (item) => item.candidateId === candidateId,
+  );
+  const browserDraftIdentity = JSON.stringify([
+    candidate?.candidateId,
+    candidate?.candidateDigest,
+    browserCheckId,
+    assertionType,
+    expectedValue,
+  ]);
+  const browserInspectionCurrent =
+    fresh &&
+    browserInspection !== null &&
+    browserInspection.ownerId === state?.ownerId &&
+    browserInspection.projectRevision === state.projectRevision &&
+    browserInspection.stateRevision === state.stateRevision &&
+    browserInspection.runId === (state.snapshot.status.run?.runId ?? null);
+  const browserPreviewCurrent =
+    browserInspectionCurrent &&
+    browserPreview !== null &&
+    state?.browserPreview?.previewId === browserPreview.previewId &&
+    state.browserPreview.previewDigest === browserPreview.previewDigest &&
+    state.ownerId === browserPreview.ownerId &&
+    state.projectRevision === browserPreview.projectRevision &&
+    browserPreview.expiresAt > observedAt &&
+    browserPreview.candidate.candidateId === candidate?.candidateId &&
+    browserPreview.candidate.candidateDigest === candidate?.candidateDigest &&
+    preparedBrowserDraft === browserDraftIdentity;
+  const latest = useRef({ fresh, state, browserPreviewCurrent, browserDraftIdentity });
   useLayoutEffect(() => {
-    latest.current = { fresh, state };
-  }, [fresh, state, latest]);
+    latest.current = { fresh, state, browserPreviewCurrent, browserDraftIdentity };
+  }, [fresh, state, browserPreviewCurrent, browserDraftIdentity, latest]);
   const run = state?.snapshot.status.run;
   const submitting = commandState.status === "submitting";
   const draftIdentity = JSON.stringify([goal, recipeId, recipeInputs]);
@@ -143,7 +187,12 @@ export function WeavraControls({
         current.state.nextRequestId !== request.id ||
         current.state.projectRevision !== request.expectedProjectRevision ||
         ("expectedStateRevision" in request &&
-          current.state.stateRevision !== request.expectedStateRevision)
+          current.state.stateRevision !== request.expectedStateRevision) ||
+        (request.type === "browser.confirm" &&
+          (!current.browserPreviewCurrent ||
+            current.browserDraftIdentity !== browserDraftIdentity ||
+            current.state.browserPreview?.previewId !== request.previewId ||
+            current.state.browserPreview.previewDigest !== request.previewDigest))
       ) {
         setCommandState({
           status: "rejected",
@@ -172,6 +221,8 @@ export function WeavraControls({
       if (response.data.kind === "prepared") {
         setPreview(response.data.preview);
         setPreparedDraft(draftIdentity);
+        setBrowserPreview(null);
+        setPreparedBrowserDraft(null);
         setCriteria(
           response.data.preview.acceptanceCriteria
             .map((criterion) => criterion.statement)
@@ -181,6 +232,40 @@ export function WeavraControls({
           status: "accepted",
           message:
             "Plan prepared by Runtime. No workflow has started; review and explicitly confirm this preview.",
+        });
+      } else if (response.data.kind === "browser-state") {
+        setBrowserInspection({
+          ownerId: response.ownerId,
+          projectRevision: response.projectRevision ?? 0,
+          stateRevision: response.stateRevision,
+          runId: response.runId,
+          data: response.data.state,
+        });
+        setBrowserPreview(null);
+        setPreparedBrowserDraft(null);
+        setCommandState({
+          status: "accepted",
+          message:
+            "Recorded browser candidates and evidence loaded from Runtime. Historical captures are not a live page check.",
+        });
+      } else if (response.data.kind === "browser-prepared") {
+        setBrowserPreview(response.data.preview);
+        setPreparedBrowserDraft(browserDraftIdentity);
+        setPreview(null);
+        setPreparedDraft(null);
+        setCommandState({
+          status: "accepted",
+          message:
+            "Browser registration preview prepared by Runtime. Review the expectation and explicitly confirm; nothing is registered yet.",
+        });
+      } else if (response.data.kind === "browser-registered") {
+        setBrowserPreview(null);
+        setPreparedBrowserDraft(null);
+        setBrowserInspection(null);
+        setCommandState({
+          status: "accepted",
+          message:
+            "Runtime acknowledged registration. Refresh browser evidence to read the registry. Registration is not PASS or COMPLETE; each verification requires a new isolated capture.",
         });
       } else {
         setCommandState({
@@ -278,6 +363,54 @@ export function WeavraControls({
       decision === "approve"
         ? `Approve ONE deletion of ${approval.path}?\nRun: ${approval.runId}\nApproval: ${approval.approvalId}\nFingerprint: ${approval.preconditionDigest}\nNo automatic rollback. This does not approve any other action or establish completion.`
         : undefined,
+    );
+  };
+  const inspectBrowser = () => {
+    const fields = common();
+    if (fields) void submit({ ...fields, type: "browser.inspect" });
+  };
+  const prepareBrowser = () => {
+    const fields = common();
+    if (!fields || !canPrepare || !browserInspectionCurrent || !candidate) return;
+    try {
+      void submit(
+        decodeMutation({
+          ...fields,
+          type: "browser.prepare",
+          registration: {
+            candidateId: candidate.candidateId,
+            expectedCandidateDigest: candidate.candidateDigest,
+            checkId: browserCheckId,
+            origin: candidate.origin,
+            documentIdentity: candidate.documentIdentity,
+            target: candidate.observation.target,
+            assertion:
+              assertionType === "element_exists" || assertionType === "element_not_exists"
+                ? { type: assertionType }
+                : { type: assertionType, expected: expectedValue },
+            freshness: { mode: "NEW_ISOLATED_CAPTURE", maxAgeMs: 15000 },
+          },
+        }),
+      );
+    } catch {
+      setCommandState({
+        status: "rejected",
+        message:
+          "Use a check name of 1–64 letters, digits, dots, hyphens or underscores, starting with a letter or digit, and a bounded supported expectation.",
+      });
+    }
+  };
+  const confirmBrowser = () => {
+    const fields = common();
+    if (!fields || !canPrepare || !browserPreviewCurrent || !browserPreview) return;
+    void submit(
+      {
+        ...fields,
+        type: "browser.confirm",
+        previewId: browserPreview.previewId,
+        previewDigest: browserPreview.previewDigest,
+      },
+      `Register this exact browser check for ${workspaceRoot}?\nCheck: ${browserPreview.check.checkId}\nDocument: ${browserPreview.check.documentIdentity}\nTarget: ${browserPreview.check.target.selector}\nAssertion: ${JSON.stringify(browserPreview.check.assertion)}\nRegistration digest: ${browserPreview.check.registrationDigest}\nThis records an expectation, not PASS. Runtime must capture a new isolated browser document for every SELF_CHECK and TEST. Browser failures never trigger automatic repair.`,
     );
   };
   return (
@@ -489,6 +622,320 @@ export function WeavraControls({
             </Button>
           </section>
         )}
+        <section
+          aria-label="Browser evidence and registration"
+          className="space-y-4 border-t border-border pt-5"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 className="text-sm font-medium">Browser checks</h3>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Observe → review expectation → register → independently verify
+              </p>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!fresh || submitting}
+              onClick={inspectBrowser}
+            >
+              Refresh browser evidence
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Local static documents only. Candidates are recorded observations, not checks or proof
+            of current page state. Runtime owns registration, fresh private HOME/profile/CDP-pipe
+            captures and Kernel completion. Browser isolation is not an OS sandbox. No personal
+            browser session, scripts or interactive actions are accepted.
+          </p>
+          {browserInspection && (
+            <>
+              <Badge variant={browserInspectionCurrent ? "outline" : "warning"}>
+                {browserInspectionCurrent
+                  ? "RECORDED RUNTIME INSPECTION"
+                  : "STALE INSPECTION · REFRESH REQUIRED"}
+              </Badge>
+              {browserInspection.data.candidates.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  No saved target candidates. Use the Runtime browser observation command with
+                  explicit candidate saving.
+                </p>
+              )}
+              <div className="space-y-3">
+                {browserInspection.data.candidates.map((item) => (
+                  <article
+                    key={item.candidateId}
+                    className="space-y-3 rounded-md border border-border bg-muted/20 p-3"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <code className="text-xs">
+                        {item.observation.target.selector}
+                        {item.observation.target.attribute
+                          ? ` · ${item.observation.target.attribute}`
+                          : ""}
+                      </code>
+                      <Badge variant="warning">CANDIDATE_ONLY</Badge>
+                    </div>
+                    <dl className="grid gap-2 text-xs sm:grid-cols-2">
+                      {[
+                        ["Origin", item.origin],
+                        ["Document", item.documentIdentity],
+                        ["Captured", new Date(item.capturedAt).toLocaleString()],
+                        [
+                          "Observed value",
+                          item.observation.exists
+                            ? (item.observation.value ?? "(attribute absent)")
+                            : "(element absent)",
+                        ],
+                        ["Candidate", item.candidateId],
+                        ["Candidate digest", item.candidateDigest],
+                        ["Document revision", item.pageRevision],
+                        ["Reader revision", item.source.readerRevision],
+                      ].map(([label, value]) => (
+                        <div key={label}>
+                          <dt className="text-muted-foreground">{label}</dt>
+                          <dd className="mt-1 whitespace-pre-wrap break-all">{value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={!canPrepare || !browserInspectionCurrent}
+                      onClick={() => {
+                        setCandidateId(item.candidateId);
+                        setAssertionType(
+                          item.observation.target.attribute ? "attribute_equals" : "text_equals",
+                        );
+                        setExpectedValue(item.observation.value ?? "");
+                        setBrowserPreview(null);
+                        setPreparedBrowserDraft(null);
+                      }}
+                    >
+                      {candidateId === item.candidateId
+                        ? "Selected for review"
+                        : "Review this candidate"}
+                    </Button>
+                  </article>
+                ))}
+              </div>
+              {browserInspection.data.omittedCandidates > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  {browserInspection.data.omittedCandidates} additional candidates omitted from this
+                  bounded view.
+                </p>
+              )}
+              {candidate && (
+                <form
+                  aria-label="Browser expectation editor"
+                  className="space-y-3 rounded-md border border-border p-4"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    prepareBrowser();
+                  }}
+                >
+                  <p className="text-xs text-muted-foreground">
+                    The observed value is only a starting point. Review and edit the expected
+                    behavior before requesting a Runtime preview.
+                  </p>
+                  <label className="block space-y-1 text-sm">
+                    <span>Browser check name</span>
+                    <input
+                      aria-label="Browser check name"
+                      value={browserCheckId}
+                      maxLength={64}
+                      className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                      disabled={!canPrepare || !browserInspectionCurrent}
+                      onChange={(event) => setBrowserCheckId(event.target.value)}
+                      placeholder="status-ready"
+                    />
+                  </label>
+                  <label className="block space-y-1 text-sm">
+                    <span>Browser assertion</span>
+                    <select
+                      aria-label="Browser assertion"
+                      value={assertionType}
+                      className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                      disabled={!canPrepare || !browserInspectionCurrent}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        if (
+                          value === "text_equals" ||
+                          value === "text_contains" ||
+                          value === "element_exists" ||
+                          value === "element_not_exists" ||
+                          value === "attribute_equals"
+                        )
+                          setAssertionType(value);
+                      }}
+                    >
+                      {(candidate.observation.target.attribute
+                        ? ["attribute_equals"]
+                        : ["text_equals", "text_contains", "element_exists", "element_not_exists"]
+                      ).map((type) => (
+                        <option key={type} value={type}>
+                          {type}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {assertionType !== "element_exists" && assertionType !== "element_not_exists" && (
+                    <label className="block space-y-1 text-sm">
+                      <span>Expected value · review and edit</span>
+                      <Textarea
+                        aria-label="Browser expected value"
+                        value={expectedValue}
+                        maxLength={1024}
+                        disabled={!canPrepare || !browserInspectionCurrent}
+                        onChange={(event) => setExpectedValue(event.target.value)}
+                      />
+                    </label>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    Fixed target: {candidate.observation.target.selector} · fresh capture every
+                    verification · maximum evidence age 15 seconds.
+                  </p>
+                  <Button
+                    type="submit"
+                    size="sm"
+                    disabled={
+                      !canPrepare ||
+                      !browserInspectionCurrent ||
+                      !browserCheckId ||
+                      (assertionType === "text_contains" && !expectedValue)
+                    }
+                  >
+                    Prepare browser registration
+                  </Button>
+                </form>
+              )}
+              {browserPreview && (
+                <section
+                  aria-label="Runtime browser registration preview"
+                  className="space-y-3 rounded-md border border-border p-4"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h4 className="text-sm font-medium">Runtime browser registration preview</h4>
+                    <Badge variant={browserPreviewCurrent ? "info" : "warning"}>
+                      {browserPreviewCurrent
+                        ? "REVIEW BEFORE REGISTERING"
+                        : "REFRESH PREVIEW REQUIRED"}
+                    </Badge>
+                  </div>
+                  <dl className="grid gap-2 text-xs sm:grid-cols-2">
+                    {[
+                      ["Check", browserPreview.check.checkId],
+                      ["Document", browserPreview.check.documentIdentity],
+                      ["Target", JSON.stringify(browserPreview.check.target)],
+                      ["Expectation", JSON.stringify(browserPreview.check.assertion)],
+                      ["Registration digest", browserPreview.check.registrationDigest],
+                      ["Preview digest", browserPreview.previewDigest],
+                      ["Expires", new Date(browserPreview.expiresAt).toLocaleString()],
+                    ].map(([label, value]) => (
+                      <div key={label}>
+                        <dt className="text-muted-foreground">{label}</dt>
+                        <dd className="mt-1 whitespace-pre-wrap break-all">{value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                  <p className="text-xs text-muted-foreground">
+                    Confirming registers only this expectation. It does not capture the page,
+                    produce PASS, start a workflow or authorize automatic repair.
+                  </p>
+                  <Button
+                    size="sm"
+                    disabled={!canPrepare || !browserPreviewCurrent}
+                    onClick={confirmBrowser}
+                  >
+                    Confirm browser registration
+                  </Button>
+                </section>
+              )}
+              <div className="space-y-2 text-xs">
+                <h4 className="font-medium">Runtime registry · recorded view</h4>
+                {browserInspection.data.checks.length === 0 && (
+                  <p className="text-muted-foreground">
+                    No registered browser checks in this view.
+                  </p>
+                )}
+                {browserInspection.data.checks.map(({ check, required }) => (
+                  <div
+                    key={check.checkId}
+                    className="space-y-1 rounded-md border border-border p-3"
+                  >
+                    <p>
+                      {check.checkId} · {required ? "required" : "optional"} ·{" "}
+                      <strong>REGISTERED, NOT VERIFIED</strong>
+                    </p>
+                    <p className="break-all">
+                      {check.documentIdentity} · {check.target.selector}
+                    </p>
+                    <p className="whitespace-pre-wrap break-all">
+                      {JSON.stringify(check.assertion)}
+                    </p>
+                    <p className="break-all text-muted-foreground">{check.registrationDigest}</p>
+                  </div>
+                ))}
+                {browserInspection.data.omittedChecks > 0 && (
+                  <p className="text-muted-foreground">
+                    {browserInspection.data.omittedChecks} additional checks omitted.
+                  </p>
+                )}
+              </div>
+              <div className="space-y-2 text-xs">
+                <h4 className="font-medium">Latest durable Run · recorded browser evidence</h4>
+                <p className="text-muted-foreground">
+                  A recorded PASS applies only to its capture, Run, step and revision. It is not a
+                  live page status. Missing or unavailable evidence never falls back to an older
+                  passing Run.
+                </p>
+                {browserInspection.data.evidence.length === 0 && (
+                  <p className="text-muted-foreground">
+                    No browser verification evidence in the latest Run.
+                  </p>
+                )}
+                {browserInspection.data.evidence.map((entry) => (
+                  <div
+                    key={`${entry.runId}:${entry.checkId}:${entry.revision}:${entry.step?.stepId}:${entry.step?.attempt ?? "unknown"}`}
+                    className="space-y-1 rounded-md border border-border p-3"
+                  >
+                    <p>
+                      {entry.checkId} · {entry.step?.stepId ?? "unknown step"} ·{" "}
+                      <strong>{entry.status}</strong>
+                    </p>
+                    <p className="break-all">
+                      Run {entry.runId} · revision {entry.revision}
+                    </p>
+                    {entry.browser ? (
+                      <>
+                        <p>
+                          Captured {new Date(entry.browser.capturedAt).toLocaleString()} · cleanup{" "}
+                          {entry.browser.cleanup}
+                        </p>
+                        <p className="break-all">{entry.browser.documentIdentity}</p>
+                        <p className="break-all text-muted-foreground">
+                          Registration {entry.browser.registrationDigest}
+                        </p>
+                        <p className="break-all text-muted-foreground">
+                          Document {entry.browser.documentDigest}
+                        </p>
+                      </>
+                    ) : (
+                      <p className="text-muted-foreground">
+                        No accepted browser capture metadata for this result.
+                      </p>
+                    )}
+                  </div>
+                ))}
+                {browserInspection.data.omittedEvidence > 0 && (
+                  <p className="text-muted-foreground">
+                    {browserInspection.data.omittedEvidence} additional browser results omitted.
+                  </p>
+                )}
+              </div>
+            </>
+          )}
+        </section>
         {approval && (
           <section
             aria-label="Pending R3 approval"

@@ -3,6 +3,7 @@ import { it } from "@effect/vitest";
 import {
   ProjectId,
   type OrchestrationProjectShell,
+  type WeavraBrowserCandidateSummary,
   type WeavraControlMutation,
   type WeavraControlObservation,
   WeavraControlState,
@@ -24,6 +25,41 @@ import { make } from "./RuntimeController.ts";
 
 const projectId = ProjectId.make("control-project");
 const decodeCanonical = Schema.decodeEffect(Schema.fromJsonString(WeavraControlState));
+const browserCandidate: WeavraBrowserCandidateSummary = {
+  schemaVersion: 2,
+  kind: "BROWSER_OBSERVATION_CANDIDATE",
+  candidateId: "00000000-0000-4000-8000-000000000001",
+  projectId: `sha256:${"a".repeat(64)}`,
+  authority: "CANDIDATE_ONLY",
+  scope: "LOCAL_STATIC_DOCUMENT",
+  origin: "http://127.0.0.1:3880",
+  documentIdentity: "http://127.0.0.1:3880/status",
+  capturedAt: 100,
+  pageRevision: `sha256:${"a".repeat(64)}`,
+  source: {
+    implementationRevision: `sha256:${"a".repeat(64)}`,
+    readerRevision: "a".repeat(40),
+    readerDigest: `sha256:${"a".repeat(64)}`,
+    executableIdentityDigest: `sha256:${"a".repeat(64)}`,
+    browserVersion: "Fixture",
+  },
+  freshness: { mode: "CAPTURE_ONLY", startedAt: 90, finishedAt: 100 },
+  observationDigest: `sha256:${"a".repeat(64)}`,
+  observationType: "target",
+  observation: { target: { selector: "#status" }, exists: true, value: "Ready" },
+  candidateDigest: `sha256:${"a".repeat(64)}`,
+  cleanup: "CONFIRMED",
+};
+const registration = {
+  candidateId: browserCandidate.candidateId,
+  expectedCandidateDigest: browserCandidate.candidateDigest,
+  checkId: "status-ready",
+  origin: browserCandidate.origin,
+  documentIdentity: browserCandidate.documentIdentity,
+  target: browserCandidate.observation.target,
+  assertion: { type: "text_equals" as const, expected: "Reviewed Ready" },
+  freshness: { mode: "NEW_ISOLATED_CAPTURE" as const, maxAgeMs: 15000 },
+};
 // A protocol peer for adapter lifecycle tests, not Runtime completion evidence.
 const source = `
 import { createInterface } from 'node:readline';
@@ -35,12 +71,13 @@ writeFileSync('launch-count',String(launch));
 const ownerId='owner-'+launch;
 process.on('SIGTERM',()=>{writeFileSync('closed',String(launch));process.exit(0)});
 const digest='sha256:'+'a'.repeat(64);
+const candidate=${JSON.stringify(browserCandidate)};
 let sequence=1;
 const receipts=new Map();
 const empty={status:{source:'durable-canonical-state',ownerObserved:false,state:'missing',writerPresent:false,run:null},graph:null,graphAvailable:false,evidence:null,configuration:{source:'project-config-not-frozen-run-config',status:'missing'}};
-let state={ownerId,nextRequestId:ownerId+':1',projectRevision:0,stateRevision:null,ownedRunId:null,busy:false,cancelling:false,startFailure:null,preview:null,pendingApproval:null,snapshot:empty};
-if(existsSync('canonical.json')){const old=JSON.parse(readFileSync('canonical.json','utf8'));state={...old,ownerId,nextRequestId:ownerId+':1',ownedRunId:null,busy:false,cancelling:false,preview:null,pendingApproval:null};}
-const capabilities={authority:'Runtime/Kernel',control:'workflow-control-v1',ownerId,commands:['control.hello','control.snapshot','workflow.prepare','workflow.confirm','workflow.cancel','approval.resolve'],maxRequestBytes:32768,maxResponseBytes:65536,resultLimit:64,previewTtlMs:300000,runtimeVersion:'0.85.1',readiness:mode==='not-setup'&&launch===1?'NOT_SETUP':'READY',recipes:[]};
+let state={ownerId,nextRequestId:ownerId+':1',projectRevision:0,stateRevision:null,ownedRunId:null,busy:false,cancelling:false,startFailure:null,preview:null,browserPreview:null,pendingApproval:null,snapshot:empty};
+if(existsSync('canonical.json')){const old=JSON.parse(readFileSync('canonical.json','utf8'));state={...old,ownerId,nextRequestId:ownerId+':1',ownedRunId:null,busy:false,cancelling:false,preview:null,browserPreview:null,pendingApproval:null};}
+const capabilities={authority:'Runtime/Kernel',control:'workflow-control-v1',ownerId,commands:['control.hello','control.snapshot','workflow.prepare','workflow.confirm','workflow.cancel','approval.resolve','browser.inspect','browser.prepare','browser.confirm'],maxRequestBytes:32768,maxResponseBytes:65536,resultLimit:64,previewTtlMs:300000,runtimeVersion:'0.85.1',readiness:mode==='not-setup'&&launch===1?'NOT_SETUP':'READY',recipes:[]};
 const reply=(request,data,error)=>({protocolVersion:1,type:'control_response',id:request.id,command:request.type,ownerId,runId:state.snapshot.status.run?.runId??null,stateRevision:state.stateRevision,projectRevision:state.projectRevision,eventId:null,timestamp:1000,success:!error,...(error?{error:{code:error}}:{data})});
 const save=()=>writeFileSync('canonical.json',JSON.stringify(state));
 for await(const line of createInterface({input:process.stdin})){
@@ -56,7 +93,16 @@ for await(const line of createInterface({input:process.stdin})){
   else if(request.expectedProjectRevision!==state.projectRevision)response=reply(request,null,'STALE_PROJECT');
   else{
    state.nextRequestId=ownerId+':'+(++sequence);
-   if(request.type==='workflow.prepare'){
+   if(request.type==='browser.inspect'){
+    response=reply(request,{kind:'browser-state',state:{projectId:digest,candidates:[candidate],omittedCandidates:0,checks:existsSync('browser-check.json')?[{check:JSON.parse(readFileSync('browser-check.json','utf8')),required:true}]:[],omittedChecks:0,evidence:[],omittedEvidence:0}});
+   }else if(request.type==='browser.prepare'){
+    const {candidateId,expectedCandidateDigest,...definition}=request.registration;
+    state.browserPreview={previewId:'browser-preview',previewDigest:digest,ownerId,projectRevision:state.projectRevision,expiresAt:9999999999999,candidate:mode==='browser-wrong-candidate'?{...candidate,candidateId:'00000000-0000-4000-8000-000000000002'}:candidate,check:{version:1,projectId:digest,...definition,registrationDigest:digest},isolation:'PRIVATE_HOME_PROFILE_CDP_PIPE_NOT_OS_SANDBOX'};
+    response=reply(request,{kind:'browser-prepared',preview:state.browserPreview});
+   }else if(request.type==='browser.confirm'){
+    const check=state.browserPreview.check;writeFileSync('browser-check.json',JSON.stringify(check));state.browserPreview=null;
+    response=reply(request,{kind:'browser-registered',check});
+   }else if(request.type==='workflow.prepare'){
     state.preview={previewId:'preview',previewDigest:digest,ownerId,projectRevision:state.projectRevision,expiresAt:9999999999999,goal:request.goal,workflow:'STANDARD',executionMode:'EDIT',risk:mode==='approval'?'R3':'R1',allowedPaths:['src'],checks:[],acceptanceCriteria:[{id:'AC-1',statement:request.goal,checkIds:[],reviewRequired:true}],taskContractDigest:digest,recipe:null,configuration:{mutationMode:'compatible',verifierTrustMode:'compatible',verifierSandboxMode:'disabled',contextPackMode:'disabled',verificationRepairMode:'disabled',lspEnabled:false}};
     response=reply(request,{kind:'prepared',preview:state.preview});
    }else if(request.type==='workflow.confirm'){
@@ -447,5 +493,79 @@ it.effect("rejects a changed canonical root before forwarding another mutation",
     expect(
       yield* next(fixture.queue, (value) => value.errorCode === "PROJECT_CHANGED"),
     ).toMatchObject({ stale: true, state: null });
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  "forwards browser review and confirmation while keeping registration separate from Run evidence",
+  () =>
+    Effect.gen(function* () {
+      const fixture = yield* setup();
+      const inspected = yield* fixture.controller.command({
+        projectId,
+        request: { ...fields(fixture.initial.state!), type: "browser.inspect" },
+      });
+      expect(inspected).toMatchObject({
+        success: true,
+        data: {
+          kind: "browser-state",
+          state: { candidates: [browserCandidate], checks: [], evidence: [] },
+        },
+      });
+      const inspectedState = (yield* connected(fixture.queue)).state!;
+      const prepared = yield* fixture.controller.command({
+        projectId,
+        request: { ...fields(inspectedState), type: "browser.prepare", registration },
+      });
+      if (!prepared.success || prepared.data.kind !== "browser-prepared")
+        throw new Error("Missing browser preview");
+      expect(prepared.data.preview.check.assertion).toEqual(registration.assertion);
+      expect(yield* fixture.fs.exists(`${fixture.root}/browser-check.json`)).toBe(false);
+      const planned = (yield* connected(fixture.queue)).state!;
+      const confirmed = yield* fixture.controller.command({
+        projectId,
+        request: {
+          ...fields(planned),
+          type: "browser.confirm",
+          previewId: prepared.data.preview.previewId,
+          previewDigest: prepared.data.preview.previewDigest,
+        },
+      });
+      expect(confirmed).toMatchObject({
+        success: true,
+        data: { kind: "browser-registered", check: prepared.data.preview.check },
+      });
+      const canonical = (yield* connected(fixture.queue)).state!;
+      expect(canonical.snapshot.status.run).toBeNull();
+      expect(canonical.snapshot.evidence).toBeNull();
+      expect(canonical.browserPreview).toBeNull();
+      const refreshed = yield* fixture.controller.command({
+        projectId,
+        request: { ...fields(canonical), type: "browser.inspect" },
+      });
+      expect(refreshed).toMatchObject({
+        success: true,
+        data: {
+          kind: "browser-state",
+          state: {
+            checks: [{ check: prepared.data.preview.check, required: true }],
+            evidence: [],
+          },
+        },
+      });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("rejects a browser preview bound to a different candidate", () =>
+  Effect.gen(function* () {
+    const fixture = yield* setup("browser-wrong-candidate");
+    const result = yield* fixture.controller
+      .command({
+        projectId,
+        request: { ...fields(fixture.initial.state!), type: "browser.prepare", registration },
+      })
+      .pipe(Effect.result);
+    expect(result).toMatchObject({ _tag: "Failure", failure: { code: "INVALID_PAYLOAD" } });
+    expect(yield* fixture.fs.exists(`${fixture.root}/browser-check.json`)).toBe(false);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
